@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Schedule Availability Detector</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <h1>Schedule Availability Detector</h1>
+
+  <div id="pageLayout">
+
+    <!-- MAIN CONTENT -->
+    <div id="mainContent">
+
+      <!-- STEP 1 -->
+      <div id="uploadStep">
+        <div class="upload-section">
+          <input type="file" id="imageInput" accept="image/*" />
+
+          <input
+            type="text"
+            id="personName"
+            placeholder="Enter person's name"
+          />
+
+          <label>
+            Start Time:
+            <select id="startTime"></select>
+          </label>
+
+          <button id="addScheduleButton">Add Schedule</button>
+          <button id="doneButton">Done</button>
+        </div>
+
+        <div id="messageBubble">
+          <canvas id="canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- STEP 2 -->
+      <div id="queryStep" style="display:none;">
+        <div id="querySection">
+          <label>
+            Day:
+            <select id="queryDay">
+              <option value="">Select Day</option>
+              <option>Monday</option>
+              <option>Tuesday</option>
+              <option>Wednesday</option>
+              <option>Thursday</option>
+              <option>Friday</option>
+            </select>
+          </label>
+
+          <label>Start: <select id="queryStart"></select></label>
+          <label>End: <select id="queryEnd"></select></label>
+
+          <button id="queryButton">Check Availability</button>
+        </div>
+
+        <div id="resultsContainer"></div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT SIDEBAR -->
+    <div id="sidebar">
+      <div id="uploadedSummary">
+        <span id="uploadedCount">Uploaded: 0</span>
+        <button id="toggleListButton">Show</button>
+      </div>
+
+      <div id="uploadedList" style="display:none;"></div>
+
+      <!-- Debug output (intentional) -->
+      <pre id="debugNames"></pre>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

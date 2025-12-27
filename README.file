@@ -1,0 +1,148 @@
+# Schedule Availability Detector
+
+## Overview
+
+The Schedule Availability Detector is a web-based tool designed to help managers determine who is free at a given time using uploaded images of schedules.
+
+Instead of reading text or calendar data, this tool analyzes the visual structure of schedule images to detect availability. This makes it reliable for frequently changing schedules that are shared as images or screenshots.
+
+---
+
+## Intended Use Case
+
+1. A manager collects schedule images from multiple people.
+2. Each schedule image is uploaded to the website.
+3. The manager selects a start time from a dropdown.
+4. The website determines whether each person is free or busy at that time.
+5. The manager uses this information to make staffing or coordination decisions.
+
+---
+
+## Design Philosophy
+
+This project intentionally avoids text recognition or calendar parsing.
+
+The core assumption is:
+
+White space represents free time.  
+Colored blocks represent busy time.  
+Black lines represent boundaries between time intervals.
+
+By relying on color and structure rather than text, the tool remains simple, fast, and robust.
+
+---
+
+## Why the Start Time Dropdown Exists
+
+The HTML canvas API cannot determine what time corresponds to a pixel position in an image.
+
+To solve this, the user provides a time anchor using a dropdown. This selected start time corresponds to a known horizontal reference in the schedule image. All other times are calculated relative to this anchor using fixed time intervals.
+
+This avoids errors caused by OCR, inconsistent fonts, or layout differences.
+
+---
+
+## Schedule Image Handling and Storage Behavior
+
+When the application starts, the schedule image directory is intentionally empty.
+
+No schedules are preloaded, cached, or stored by default.
+
+As the user uploads schedule images (JPG/PNG files), each image is added to the system dynamically for processing. The application treats each uploaded image as a temporary input representing one person’s current schedule.
+
+Schedules are added incrementally as the user uploads them and are processed in the order they are received.
+
+This design ensures:
+- The tool always reflects the most current schedules
+- Outdated schedules are not accidentally reused
+- The system remains stateless between sessions unless explicitly extended
+
+---
+
+## Design Rationale
+
+Schedules change frequently, and managers often work with the latest image provided by each person.
+
+Starting with an empty schedule directory avoids:
+- Stale or incorrect availability data
+- Confusion about which schedules are active
+- Manual cleanup between uses
+
+By building the schedule set dynamically during each session, the tool guarantees that availability calculations are based only on the images the user has intentionally provided.
+
+---
+
+## Conceptual Flow
+
+1. Application loads with no schedules present.
+2. User uploads a schedule image.
+3. The image is added to the active schedule set.
+4. The canvas analyzes the image for availability.
+5. The process repeats as additional schedules are uploaded.
+
+At no point does the system assume persistent storage unless explicitly implemented in the future.
+
+## How Availability Detection Works
+
+### Image Processing
+- The uploaded schedule image is drawn onto an HTML canvas.
+- The canvas allows pixel-level access to the image.
+
+### Time Mapping
+- The selected start time maps to a specific horizontal pixel row.
+- Each vertical interval represents a fixed time duration (for example, 30 minutes).
+
+### Pixel Analysis
+At the pixel row corresponding to the requested time:
+- White pixels indicate free time.
+- Any non-white pixels indicate busy time.
+- Black pixels indicate the end of a time interval.
+
+### Decision Logic
+- If the area at the requested time is white, the person is free.
+- If the area contains color, the person is busy.
+- Black lines define hard boundaries between time blocks.
+
+---
+
+## Assumptions About Schedule Images
+
+For accurate results, schedule images should:
+- Use white or near-white backgrounds for free time
+- Use colored blocks for occupied time
+- Use black or dark lines to separate time intervals
+- Maintain consistent vertical spacing between time slots
+
+Planner-style schedules commonly used in schools and workplaces work best.
+
+---
+
+## What This Tool Is Not
+
+- It does not read text from images
+- It does not interpret class or event names
+- It does not integrate with calendar APIs
+- It does not rely on any specific schedule provider
+
+---
+
+## Why This Approach Works
+
+- Visual schedules already communicate availability clearly
+- White space is a universal indicator of free time
+- Color blocks clearly show commitments
+- Managers care about availability, not labels
+
+This approach focuses on reliability and simplicity.
+
+---
+
+## Summary
+
+The Schedule Availability Detector determines availability by:
+- Anchoring time using user input
+- Analyzing pixel colors on a canvas
+- Treating white as free and color as busy
+
+It is a practical tool for real-world schedule management where images are the primary format.
+
