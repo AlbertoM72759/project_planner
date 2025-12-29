@@ -1,4 +1,4 @@
-# Schedule Availability Detector
+# Schedule Availability Detector(Limite is around 55 JPG)
 
 ## Overview
 
@@ -146,3 +146,179 @@ The Schedule Availability Detector determines availability by:
 
 It is a practical tool for real-world schedule management where images are the primary format.
 
+
+
+Schedule Availability Detector
+Overview
+
+The Schedule Availability Detector is a web-based tool designed to determine availability from schedule images (JPG/PNG), without relying on text recognition, calendars, or external integrations.
+
+Instead of interpreting labels or event names, the system analyzes the visual structure of schedules using pixel-level analysis on an HTML canvas. This makes the tool robust against inconsistent formatting, fonts, and rapidly changing schedules that are commonly shared as screenshots or photos.
+
+Intended Use Case
+
+A manager collects schedule images from multiple people.
+
+Each person’s schedule image is uploaded to the website.
+
+For each image, the user selects a start time anchor.
+
+The manager queries a day and time range.
+
+The system determines who is free at those times based solely on visual availability.
+
+The manager uses the results to make staffing or coordination decisions.
+
+Core Design Philosophy
+
+This project intentionally avoids:
+
+Optical Character Recognition (OCR)
+
+Calendar APIs
+
+Text parsing
+
+Assumptions about schedule providers
+
+Instead, it relies on a consistent interpretation of visual structure:
+
+White space represents free time.
+Colored regions represent busy time.
+Dark horizontal lines represent time boundaries.
+Dark vertical lines represent day boundaries.
+
+Schedules are treated as structured grids, not documents.
+
+Anchored Time Model (Why the Start Time Dropdown Exists)
+
+The HTML canvas API cannot determine what time corresponds to a pixel position in an image.
+
+To solve this, the system uses a user-provided time anchor. The selected start time corresponds to a known horizontal reference in the schedule image. All other times are calculated relative to this anchor using fixed time intervals (for example, 30 minutes).
+
+This explicit anchoring:
+
+Eliminates OCR-related errors
+
+Avoids font and layout dependency
+
+Makes time mapping deterministic and explainable
+
+Plot-on-Demand Availability Detection
+
+The system does not precompute a full weekly availability table.
+
+Instead, availability is computed only when a query is made:
+
+Each uploaded image is preprocessed once to generate pixel masks and prefix sums.
+
+Horizontal time lines are detected to identify fixed time intervals.
+
+At query time, the system jumps directly to the requested time band.
+
+The image is swept horizontally across that band.
+
+Vertical dividers are detected to split the row into weekday regions.
+
+Only the requested cells are classified as free or busy.
+
+This approach reduces state, minimizes unnecessary computation, and mirrors how schedules are visually structured.
+
+Image Processing Strategy
+
+Preprocessing (once per image):
+
+The image is drawn to an offscreen canvas.
+
+White and dark pixel masks are generated.
+
+Prefix sums are built for fast rectangular area queries.
+
+Horizontal grid lines are detected using consistency and spacing.
+
+Query-time analysis:
+
+Requested times are mapped to pixel bands using the anchor time.
+
+Day regions are determined using vertical divider detection.
+
+Each cell is classified by white pixel ratio, making the system robust to text and borders.
+
+Weekday-Only Scope (Monday–Friday)
+
+This tool intentionally supports Monday through Friday schedules only.
+
+This constraint:
+
+Matches common academic and workplace usage
+
+Simplifies segmentation logic
+
+Reduces ambiguity
+
+Improves reliability
+
+Weekends are explicitly excluded.
+
+Schedule Image Assumptions
+
+For accurate results, schedule images should:
+
+Use white or near-white backgrounds for free time
+
+Use colored blocks for occupied time
+
+Use dark lines to separate time intervals and days
+
+Maintain consistent vertical spacing between time slots
+
+Planner-style schedules used in schools and workplaces work best.
+
+Session-Based Schedule Handling
+
+When the application starts, no schedules are loaded or cached.
+
+Schedule images are added dynamically as the user uploads them. Each uploaded image represents one person’s current schedule and exists only for the duration of the session.
+
+This design ensures:
+
+No stale data
+
+Clear user intent
+
+Predictable behavior
+
+Easy extension to persistence if desired
+
+What This Tool Is Not
+
+It does not read text from images
+
+It does not interpret class or event names
+
+It does not integrate with calendar APIs
+
+It does not rely on any specific schedule provider
+
+Why This Approach Works
+
+Visual schedules already communicate availability clearly.
+
+White space universally indicates free time.
+Colored blocks indicate commitments.
+
+By anchoring time explicitly and analyzing schedules geometrically rather than textually, the tool remains simple, fast, and reliable.
+
+Summary
+
+The Schedule Availability Detector determines availability by:
+
+Anchoring time using explicit user input
+
+Analyzing pixel structure rather than text
+
+Plotting availability only when queried
+
+Treating schedules as geometric grids
+
+This approach is practical for real-world schedule management where images are the primary format.

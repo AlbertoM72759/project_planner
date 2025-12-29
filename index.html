@@ -31,7 +31,7 @@
           </label>
 
           <button id="addScheduleButton">Add Schedule</button>
-          <button id="doneButton">Done</button>
+          <button id="doneButton">Save & Continue</button>
         </div>
 
         <div id="messageBubble">
@@ -58,6 +58,7 @@
           <label>End: <select id="queryEnd"></select></label>
 
           <button id="queryButton">Check Availability</button>
+          <button id="backButton" type="button">Back</button>
         </div>
 
         <div id="resultsContainer"></div>
@@ -70,6 +71,11 @@
       <div id="uploadedSummary">
         <span id="uploadedCount">Uploaded: 0</span>
         <button id="toggleListButton">Show</button>
+      </div>
+
+      <!-- NEW: Clear All -->
+      <div style="margin-top:8px;">
+        <button id="clearAllButton" type="button" style="width:100%;">Clear All</button>
       </div>
 
       <div id="uploadedList" style="display:none;"></div>
