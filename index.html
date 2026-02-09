@@ -1,91 +1,29 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Schedule Availability Detector</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body>
+  <header class="topbar">
+    <a class="link" href="index.html">Home</a>
+    <div class="spacer"></div>
+    <a class="link" href="upload.html">Upload</a>
+    <a class="link" href="query.html">Query</a>
+  </header>
+  
+  <div class="page">
+    <h1>Schedule Availability Detector</h1>
+    <p class="muted">Upload schedules once. Query anytime from saved data.</p>
 
-  <h1>Schedule Availability Detector</h1>
-
-  <div id="pageLayout">
-
-    <!-- MAIN CONTENT -->
-    <div id="mainContent">
-
-      <!-- STEP 1 -->
-      <div id="uploadStep">
-        <div class="upload-section">
-          <input type="file" id="imageInput" accept="image/*" />
-
-          <input
-            type="text"
-            id="personName"
-            placeholder="Enter person's name"
-          />
-
-          <label>
-            Start Time:
-            <select id="startTime"></select>
-          </label>
-
-          <button id="addScheduleButton">Add Schedule</button>
-          <button id="doneButton">Save & Continue</button>
-        </div>
-
-        <div id="messageBubble">
-          <canvas id="canvas"></canvas>
-        </div>
-      </div>
-
-      <!-- STEP 2 -->
-      <div id="queryStep" style="display:none;">
-        <div id="querySection">
-          <label>
-            Day:
-            <select id="queryDay">
-              <option value="">Select Day</option>
-              <option>Monday</option>
-              <option>Tuesday</option>
-              <option>Wednesday</option>
-              <option>Thursday</option>
-              <option>Friday</option>
-            </select>
-          </label>
-
-          <label>Start: <select id="queryStart"></select></label>
-          <label>End: <select id="queryEnd"></select></label>
-
-          <button id="queryButton">Check Availability</button>
-          <button id="backButton" type="button">Back</button>
-        </div>
-
-        <div id="resultsContainer"></div>
-      </div>
-
+    <div class="row">
+      <a class="btn" href="upload.html">Upload / Add Schedules</a>
+      <a class="btn" href="query.html">Group Query</a>
     </div>
-
-    <!-- RIGHT SIDEBAR -->
-    <div id="sidebar">
-      <div id="uploadedSummary">
-        <span id="uploadedCount">Uploaded: 0</span>
-        <button id="toggleListButton">Show</button>
-      </div>
-
-      <!-- NEW: Clear All -->
-      <div style="margin-top:8px;">
-        <button id="clearAllButton" type="button" style="width:100%;">Clear All</button>
-      </div>
-
-      <div id="uploadedList" style="display:none;"></div>
-
-      <!-- Debug output (intentional) -->
-      <pre id="debugNames"></pre>
-    </div>
-
   </div>
-
-  <script src="app.js"></script>
 </body>
 </html>
