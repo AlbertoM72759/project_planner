@@ -145,7 +145,6 @@
     elPreviewWrap.style.display = "block";
   }
 
-
   async function drawFileToCanvas(file) {
     const canvas = document.getElementById("canvas");
     const ctx = canvas ? canvas.getContext("2d") : null;
@@ -231,6 +230,18 @@
       // ✅ get the actual pre object
       const pre = window.LAST_PRE;
       if (!pre) throw new Error("LAST_PRE missing after waitForPreReady()");
+      // DEBUG: expose pre for console diagnostics (read-only)
+      try {
+        window.__LAST_PRE__ = pre;
+        console.log("DEBUG: __LAST_PRE__ exported", {
+          w: pre?.w,
+          h: pre?.h,
+          imgLen: pre?.imgData?.length,
+          hasImgData: !!pre?.imgData
+        });
+      } catch (e) {
+        console.warn("DEBUG: failed exporting __LAST_PRE__", e);
+      }
 
       // 🔹 NAV builder must run in Phase 1
       if (typeof window.buildAndPublishNav === "function") {

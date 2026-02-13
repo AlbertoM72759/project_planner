@@ -4,6 +4,7 @@
 
 (function () {
   function $(id) { return document.getElementById(id); }
+  console.log("QUERY.JS LOADED v2026-02-11a");
 
   function escapeHTML(s) {
     return String(s ?? "")
@@ -39,7 +40,23 @@
     const skipped = Array.isArray(res.skipped) ? res.skipped : [];
 
     if (!available.length) {
-      root.innerHTML = `<div class="muted">No one has free time in that window.</div>`;
+      root.innerHTML = `
+        <div class="results-head">
+          <div><b>${escapeHTML(res.day)}</b> ${escapeHTML(res.startStr)} → ${escapeHTML(res.endStr)}</div>
+          <div class="muted">Listed: 0 • Skipped: ${skipped.length}</div>
+        </div>
+
+        <div class="muted">No one has free or placement time in that window.</div>
+
+        ${skipped.length ? `
+          <details class="skipped">
+            <summary>Skipped (${skipped.length})</summary>
+            <ul>
+              ${skipped.map(s => `<li><b>${escapeHTML(s.person)}</b>: ${escapeHTML(s.reason)}</li>`).join("")}
+            </ul>
+          </details>
+        ` : ``}
+      `;
       return;
     }
 
@@ -48,16 +65,45 @@
         <div><b>${escapeHTML(res.day)}</b> ${escapeHTML(res.startStr)} → ${escapeHTML(res.endStr)}</div>
         <div class="muted">Listed: ${available.length} • Skipped: ${skipped.length}</div>
       </div>
-      ${available.map(p => `
-        <div class="result-bubble">
-          <div class="result-name">${escapeHTML(p.person)}</div>
-          <div class="result-ranges">
-            ${(p.freeRanges || []).map(r => `
+
+      ${available.map(p => {
+        const person = escapeHTML(p?.person || "(unnamed)");
+
+        const freeRanges = Array.isArray(p?.freeRanges) ? p.freeRanges : [];
+        const workRanges = Array.isArray(p?.workRanges) ? p.workRanges : [];
+
+        const freeHTML = freeRanges.length
+          ? freeRanges.map(r => `
               <span class="pill">${escapeHTML(r.start)} – ${escapeHTML(r.end)}</span>
-            `).join("")}
+            `).join("")
+          : `<span class="muted">No free time in this window.</span>`;
+
+        const workHTML = workRanges.length
+          ? workRanges.map(r => `
+              <span class="pill pill-work">${escapeHTML(r.start)} – ${escapeHTML(r.end)}</span>
+            `).join("")
+          : "";
+
+        return `
+          <div class="result-bubble">
+            <div class="result-name">${person}</div>
+
+            <div class="result-ranges">
+              ${freeHTML}
+            </div>
+
+            ${workRanges.length ? `
+              <div class="result-work">
+                <div class="result-work-label">Work:</div>
+                <div class="result-work-ranges">
+                  ${workHTML}
+                </div>
+              </div>
+            ` : ``}
           </div>
-        </div>
-      `).join("")}
+        `;
+      }).join("")}
+
       ${skipped.length ? `
         <details class="skipped">
           <summary>Skipped (${skipped.length})</summary>

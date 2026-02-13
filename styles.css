@@ -575,3 +575,30 @@ canvas{
     max-width: 100%;
   }
 }
+
+/* ===============================
+ * QUERY — Work ranges styling
+ * =============================== */
+
+.result-work {
+  margin-top: 6px;
+}
+
+.result-work-label {
+  font-size: 0.85rem;
+  color: var(--text-muted, #555);
+  margin-bottom: 4px;
+}
+
+.result-work-ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Work pills: visually distinct from free time */
+.pill-work {
+  background: rgba(140, 29, 24, 0.12);   /* LMU crimson, soft */
+  color: var(--lmu-crimson, #8C1D18);
+  border: 1px solid rgba(140, 29, 24, 0.35);
+}

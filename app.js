@@ -402,6 +402,7 @@ function minutesToTimeStr(totalMinutes) {
   return `${displayHour}:${String(minute).padStart(2, "0")} ${ampm}`;
 }
 
+
 /*************************
  * CORE EXPORT — populateTimes
  * Used by upload + query pages
@@ -426,8 +427,179 @@ function populateTimes(selectEl, opts = {}) {
   }
 }
 
+function timeStrToMinutes(str) {
+  const s = String(str || "").trim();
+  // expects like "9:00 AM", "12:30 PM"
+  const m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!m) return NaN;
+
+  let hh = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  const ap = m[3].toUpperCase();
+
+  if (hh < 1 || hh > 12) return NaN;
+  if (mm < 0 || mm > 59) return NaN;
+
+  // convert to 24h
+  if (ap === "AM") {
+    if (hh === 12) hh = 0;
+  } else { // PM
+    if (hh !== 12) hh += 12;
+  }
+
+  return hh * 60 + mm;
+}
+
+window.timeStrToMinutes = timeStrToMinutes;
+
 // ✅ export unconditionally
 window.populateTimes = populateTimes;
+
+/*************************
+ * ✅ Step 2 — Full-res preview storage in IndexedDB (Blob), keyed by schedule id
+ *
+ * Drop this into app.js (Layer B+ area is fine).
+ * No recompute. No base64 full images in localStorage.
+ *
+ * Public API:
+ *   window.SAD_putPreviewBlob(id, blob)
+ *   window.SAD_getPreviewBlob(id)
+ *   window.SAD_deletePreviewBlob(id)
+ *   window.SAD_clearPreviewBlobs()
+ *   window.SAD_buildPreviewBlobFromCanvas(canvas, { mime, quality })
+ *   window.SAD_getPreviewObjectURL(id)  // returns { ok, url, revoke() }
+ *************************/
+
+const SAD_IDB_NAME = "SAD_DB_V1";
+const SAD_IDB_STORE = "previews"; // key = schedule id (string)
+
+function SAD_openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SAD_IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(SAD_IDB_STORE)) {
+        db.createObjectStore(SAD_IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("IndexedDB open failed"));
+  });
+}
+
+async function SAD_putPreviewBlob(id, blob) {
+  if (!id || !blob) return { ok: false, reason: "missing id/blob" };
+  const db = await SAD_openDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SAD_IDB_STORE, "readwrite");
+      const store = tx.objectStore(SAD_IDB_STORE);
+      const req = store.put(blob, id);
+      req.onsuccess = () => resolve({ ok: true });
+      req.onerror = () => reject(req.error || new Error("put failed"));
+    });
+  } finally {
+    try { db.close(); } catch {}
+  }
+}
+
+async function SAD_getPreviewBlob(id) {
+  if (!id) return { ok: false, reason: "missing id" };
+  const db = await SAD_openDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SAD_IDB_STORE, "readonly");
+      const store = tx.objectStore(SAD_IDB_STORE);
+      const req = store.get(id);
+      req.onsuccess = () => resolve({ ok: true, blob: req.result || null });
+      req.onerror = () => reject(req.error || new Error("get failed"));
+    });
+  } finally {
+    try { db.close(); } catch {}
+  }
+}
+
+async function SAD_deletePreviewBlob(id) {
+  if (!id) return { ok: false, reason: "missing id" };
+  const db = await SAD_openDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SAD_IDB_STORE, "readwrite");
+      const store = tx.objectStore(SAD_IDB_STORE);
+      const req = store.delete(id);
+      req.onsuccess = () => resolve({ ok: true });
+      req.onerror = () => reject(req.error || new Error("delete failed"));
+    });
+  } finally {
+    try { db.close(); } catch {}
+  }
+}
+
+async function SAD_clearPreviewBlobs() {
+  const db = await SAD_openDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SAD_IDB_STORE, "readwrite");
+      const store = tx.objectStore(SAD_IDB_STORE);
+      const req = store.clear();
+      req.onsuccess = () => resolve({ ok: true });
+      req.onerror = () => reject(req.error || new Error("clear failed"));
+    });
+  } finally {
+    try { db.close(); } catch {}
+  }
+}
+
+// Full-res modal preview Blob from the *current canvas* (no recompute).
+function SAD_buildPreviewBlobFromCanvas(canvasEl, opts = {}) {
+  const canvas = canvasEl || document.getElementById("canvas");
+  if (!canvas || typeof canvas.toBlob !== "function") {
+    return Promise.resolve({ ok: false, reason: "canvas.toBlob missing" });
+  }
+
+  const mime = opts.mime || "image/jpeg";
+  const quality = Number.isFinite(opts.quality) ? opts.quality : 0.88; // sane default
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) return resolve({ ok: false, reason: "toBlob returned null" });
+      resolve({ ok: true, blob });
+    }, mime, quality);
+  });
+}
+
+// Convenience: objectURL wrapper + revoke
+async function SAD_getPreviewObjectURL(id) {
+  const r = await SAD_getPreviewBlob(id);
+  if (!r.ok || !r.blob) return { ok: false, reason: "blob missing" };
+  const url = URL.createObjectURL(r.blob);
+  return {
+    ok: true,
+    url,
+    revoke: () => { try { URL.revokeObjectURL(url); } catch {} }
+  };
+}
+
+window.SAD_putPreviewBlob = SAD_putPreviewBlob;
+window.SAD_getPreviewBlob = SAD_getPreviewBlob;
+window.SAD_deletePreviewBlob = SAD_deletePreviewBlob;
+window.SAD_clearPreviewBlobs = SAD_clearPreviewBlobs;
+window.SAD_buildPreviewBlobFromCanvas = SAD_buildPreviewBlobFromCanvas;
+window.SAD_getPreviewObjectURL = SAD_getPreviewObjectURL;
+
+function _boolAt(arr, i) {
+  return Array.isArray(arr) ? !!arr[i] : false;
+}
+
+// Option A: FREE = available AND NOT work
+function _isFreeSlot(daysArr, workArr, i) {
+  return _boolAt(daysArr, i) && !_boolAt(workArr, i);
+}
+
+// WORK = workDays
+function _isWorkSlot(workArr, i) {
+  return _boolAt(workArr, i);
+}
 
 /*************************
  * CORE EXPORT — queryAllSavedSchedulesDayRange
@@ -449,17 +621,68 @@ function queryAllSavedSchedulesDayRange(day, startStr, endStr) {
     const available = [];
     const skipped = [];
 
+    // Build merged ranges from a boolean mask over slot indices [i0, i1)
+    function buildRangesFromMask(maskArr, i0, i1, anchorMin, step, clampStartMin, clampEndMin) {
+      const ranges = [];
+      let runStartIdx = null;
+
+      for (let i = i0; i < i1; i++) {
+        const on = maskArr[i] === true;
+
+        if (on) {
+          if (runStartIdx === null) runStartIdx = i;
+        } else {
+          if (runStartIdx !== null) {
+            const runStartMin = Math.max(clampStartMin, anchorMin + runStartIdx * step);
+            const runEndMin   = Math.min(clampEndMin,   anchorMin + i * step);
+            if (runEndMin > runStartMin) {
+              ranges.push({
+                start: minutesToTimeStr(runStartMin),
+                end:   minutesToTimeStr(runEndMin)
+              });
+            }
+            runStartIdx = null;
+          }
+        }
+      }
+
+      // Close trailing run
+      if (runStartIdx !== null) {
+        const runStartMin = Math.max(clampStartMin, anchorMin + runStartIdx * step);
+        const runEndMin   = clampEndMin;
+        if (runEndMin > runStartMin) {
+          ranges.push({
+            start: minutesToTimeStr(runStartMin),
+            end:   minutesToTimeStr(runEndMin)
+          });
+        }
+      }
+
+      return ranges;
+    }
+
     for (const rec of (Array.isArray(saved) ? saved : [])) {
       const person = (rec?.person || rec?.personName || rec?.name || "(unnamed)").toString();
 
       const avail = rec?.avail;
       const nav   = rec?.nav;
 
-      // Must have boolean grid
       const dayArr = avail?.days?.[day];
-      const slots  = Number(avail?.slots);
 
-      if (!Array.isArray(dayArr) || !Number.isFinite(slots) || dayArr.length !== slots) {
+      // ✅ accept either schema: avail.slots OR avail.meta.slots
+      const slotsRaw =
+        (avail && Number.isFinite(Number(avail.slots))) ? avail.slots :
+        (avail?.meta && Number.isFinite(Number(avail.meta.slots))) ? avail.meta.slots :
+        null;
+
+      const slots = Number(slotsRaw);
+
+      // Optional last-resort: infer from the day array if present
+      const slotsFinal = (Number.isFinite(slots) && Number.isInteger(slots) && slots > 0)
+        ? slots
+        : (Array.isArray(dayArr) ? dayArr.length : NaN);
+
+      if (!Array.isArray(dayArr) || !Number.isFinite(slotsFinal) || dayArr.length !== slotsFinal) {
         skipped.push({ person, reason: "No availability grid for this day" });
         continue;
       }
@@ -474,61 +697,73 @@ function queryAllSavedSchedulesDayRange(day, startStr, endStr) {
 
       const step = TIME_STEP_MIN; // 30
 
-      // Convert query window to slot indices relative to anchor
-      // Start inclusive, End exclusive
-      const i0 = Math.max(0, Math.floor((startMin - anchorMin) / step));
-      const i1 = Math.min(slots, Math.ceil((endMin - anchorMin) / step));
+      // Absolute schedule coverage from anchor + slots
+      const schedStart = anchorMin;
+      const schedEnd   = anchorMin + slotsFinal * step;
 
-      if (i1 <= i0) {
-        skipped.push({ person, reason: "Query window outside schedule range" });
+      // Overlap of query window with schedule coverage
+      const clampStart = Math.max(startMin, schedStart);
+      const clampEnd   = Math.min(endMin,   schedEnd);
+
+      if (clampEnd <= clampStart) {
+        skipped.push({
+          person,
+          reason: `Query window outside schedule range (${minutesToTimeStr(schedStart)}–${minutesToTimeStr(schedEnd)})`
+        });
         continue;
       }
 
-      // Build merged free ranges from boolean slots
-      const freeRanges = [];
-      let runStartIdx = null;
+      // Convert CLAMPED window to slot indices relative to anchor
+      const i0 = Math.max(0, Math.floor((clampStart - anchorMin) / step));
+      const i1 = Math.min(slotsFinal, Math.ceil((clampEnd - anchorMin) / step));
 
-      for (let i = i0; i < i1; i++) {
-        const isFree = dayArr[i] === true;
+      const workArr = avail?.workDays?.[day];
 
-        if (isFree) {
-          if (runStartIdx === null) runStartIdx = i;
-        } else {
-          if (runStartIdx !== null) {
-            const runStartMin = Math.max(startMin, anchorMin + runStartIdx * step);
-            const runEndMin   = Math.min(endMin,   anchorMin + i * step);
-            if (runEndMin > runStartMin) {
-              freeRanges.push({
-                start: minutesToTimeStr(runStartMin),
-                end:   minutesToTimeStr(runEndMin)
-              });
-            }
-            runStartIdx = null;
-          }
+      // -------------------------
+      // FREE ranges (FIXED: exclude work slots)
+      // FREE = available AND NOT work
+      // -------------------------
+      let freeMask = dayArr;
+
+      if (Array.isArray(workArr) && workArr.length === slotsFinal) {
+        // build a derived mask where purple/work slots are forced OFF for "free"
+        freeMask = new Array(slotsFinal);
+        for (let i = 0; i < slotsFinal; i++) {
+          freeMask[i] = (dayArr[i] === true) && (workArr[i] !== true);
         }
       }
 
-      // Close trailing run
-      if (runStartIdx !== null) {
-        const runStartMin = Math.max(startMin, anchorMin + runStartIdx * step);
-        const runEndMin   = endMin;
-        if (runEndMin > runStartMin) {
-          freeRanges.push({
-            start: minutesToTimeStr(runStartMin),
-            end:   minutesToTimeStr(runEndMin)
-          });
-        }
-      }
+      const freeRanges = buildRangesFromMask(
+        freeMask,
+        i0, i1,
+        anchorMin, step,
+        startMin, endMin
+      );
 
-      if (freeRanges.length) {
-        available.push({ person, freeRanges });
+      // -------------------------
+      // WORK ranges (new, optional)
+      // Expectation: avail.workDays[day] is boolean[] same length as slots
+      // true => "work busy" in that slot
+      // -------------------------
+      let workRanges = [];
+      
+      if (Array.isArray(workArr) && workArr.length === slotsFinal) {
+        workRanges = buildRangesFromMask(
+          workArr,
+          i0, i1,
+          anchorMin, step,
+          startMin, endMin
+        );
+      }
+      // ✅ list if FREE or PLACEMENT exists
+      if (freeRanges.length || workRanges.length) {
+        available.push({ person, freeRanges, workRanges });
       } else {
-        skipped.push({ person, reason: "No free time in range" });
+        skipped.push({ person, reason: "No free or placement time in range" });
       }
     }
-
     return { ok: true, day, startStr, endStr, available, skipped };
-  } catch (e) {
+    } catch (e) {
     return { ok: false, reason: e?.message || String(e) };
   }
 }
@@ -536,91 +771,84 @@ function queryAllSavedSchedulesDayRange(day, startStr, endStr) {
 window.queryAllSavedSchedulesDayRange = queryAllSavedSchedulesDayRange;
 
 /*************************
- * PIPELINE — ADD SCHEDULE FROM CURRENT SESSION
+ * ✅ Patch: addScheduleFromCurrentSession() stores full preview Blob in IndexedDB
+ * NOTE: this becomes async (caller must await).
  *
- * RULES (LOCKED):
- * - NO recompute
- * - NO publish
- * - NO UI mutation
- * - Reads ONLY window.__SAD_SESSION__
- * - Writes normalized B+ record
+ * Drop-in replacement for your existing function.
  *************************/
-function addScheduleFromCurrentSession() {
+async function addScheduleFromCurrentSession() {
   const S = window.__SAD_SESSION__;
+  if (!S?.ready) return { ok: false, reason: "session not ready" };
+  if (!S?.avail) return { ok: false, reason: "session missing avail" };
+  if (!S?.nav) return { ok: false, reason: "session missing nav" };
 
-  // ---- hard gate ----
-  if (!S || !S.ready || !S.nav || !S.avail) {
-    console.warn("ADD SCHEDULE blocked: session not ready", {
-      hasSession: !!S,
-      ready: !!S?.ready,
-      hasNav: !!S?.nav,
-      hasAvail: !!S?.avail
-    });
-    return { ok: false, reason: "session not ready" };
-  }
+  const id = makeId();
 
-  const person = (S.personName || "").trim();
-  if (!person) {
-    return { ok: false, reason: "missing person name" };
-  }
+  // person name (prefer session, fallback input)
+  const person =
+    (S.personName || "").trim() ||
+    (document.getElementById("personName")?.value || "").trim() ||
+    "Unnamed";
 
-  // ---- normalized record (B+ schema) ----
-  const record = {
-    id: makeId(),
-    person,                          // 🔒 canonical key
-    savedAtISO: new Date().toISOString(),
-
-    thumb: S.thumb || null,          // lossy JPG (already built)
-    nav: S.nav,                      // frozen nav snapshot (bgWhite, ticks, slots, days)
-    avail: S.avail                   // frozen availability (Mon–Fri × slots)
-  };
-
-  // ✅ Attach live original preview (in-memory only) to this saved record id
+  // 1) Store full-res preview blob in IndexedDB
   const liveSrc = S?.meta?.liveSrc || null;
-  if (liveSrc && typeof window.SAD_registerLiveSrc === "function") {
-    window.SAD_registerLiveSrc(record.id, liveSrc);
-  }
 
-  // ---- persist (B+ is authority) ----
-  let up;
   try {
-    if (typeof upsertSchedule === "function") {
-      up = upsertSchedule(record);
-    } else if (typeof window.upsertSchedule === "function") {
-      up = window.upsertSchedule(record);
+    if (liveSrc) {
+      const resp = await fetch(liveSrc);
+      const blob = await resp.blob();
+      await window.SAD_putPreviewBlob(id, blob);
     } else {
-      throw new Error("upsertSchedule() not found");
+      const br = await window.SAD_buildPreviewBlobFromCanvas(
+        document.getElementById("canvas"),
+        { mime: "image/jpeg", quality: 0.88 }
+      );
+      if (br?.ok && br.blob) await window.SAD_putPreviewBlob(id, br.blob);
     }
   } catch (e) {
-    console.error("ADD SCHEDULE failed: storage error", e);
-    return { ok: false, reason: "storage error" };
+    console.warn("Preview blob save failed (non-fatal):", e);
   }
 
-  if (!up?.ok) {
-    console.warn("ADD SCHEDULE failed: upsert returned not ok", up);
-    return { ok: false, reason: up?.reason || "save failed" };
+  const sess = window.__SAD_SESSION__ || {};
+  const navToStore   = sess.nav   || null;
+  const availToStore = sess.avail || null;
+  const thumbToStore = sess.thumb || null;
+
+  // Hard guard: don’t save junk
+  if (!navToStore) return { ok:false, reason:"No nav in __SAD_SESSION__ (not ready)" };
+  if (!availToStore) return { ok:false, reason:"No avail in __SAD_SESSION__ (not finalized)" };
+
+  // Ensure workDays exists (even if empty) so query code can rely on it
+  if (!availToStore.workDays || typeof availToStore.workDays !== "object") {
+    availToStore.workDays = { Monday:[], Tuesday:[], Wednesday:[], Thursday:[], Friday:[] };
   }
 
-  // ---- return updated list/count (authoritative from B+) ----
-  let list = [];
-  try {
-    if (typeof loadSchedulesList === "function") {
-      list = loadSchedulesList();
-    } else if (typeof window.loadSchedulesList === "function") {
-      list = window.loadSchedulesList();
-    }
-  } catch (e) {
-    console.warn("ADD SCHEDULE: failed to reload list", e);
-  }
-
-  const count = Array.isArray(list) ? list.length : 0;
-
-  return {
-    ok: true,
-    id: record.id,
-    count,
-    list
+  // IMPORTANT: store the FULL avail object (includes anchorStartTime + workDays)
+  const record = {
+    id,
+    person,
+    savedAtISO: new Date().toISOString(),
+    thumb: thumbToStore,
+    nav: navToStore,
+    avail: availToStore
   };
+
+  // Optional: keep liveSrc in-memory only
+  if (liveSrc && typeof window.SAD_registerLiveSrc === "function") {
+    window.SAD_registerLiveSrc(id, liveSrc);
+  }
+
+  // 3) Persist via B+ (authoritative)
+  const fn = window.upsertSchedule || window.upsertScheduleRecord;
+  if (typeof fn !== "function") {
+    return { ok: false, reason: "upsertSchedule() not found" };
+  }
+
+  const up = fn(record);
+  if (!up?.ok) return { ok: false, reason: up?.reason || "save failed" };
+
+  const list = (typeof window.loadSchedulesList === "function") ? window.loadSchedulesList() : [];
+  return { ok: true, id, count: Array.isArray(list) ? list.length : 0, list };
 }
 
 window.addScheduleFromCurrentSession = addScheduleFromCurrentSession;
@@ -686,7 +914,12 @@ function isValidAvail(avail) {
 
   const hasAnchor = isNonEmptyString(avail.anchorStartTime);
 
-  const slots = Number(avail.slots);
+  // ✅ accept either legacy or current schema
+  const slotsRaw =
+    (avail.slots !== undefined ? avail.slots : undefined) ??
+    (avail.meta && avail.meta.slots !== undefined ? avail.meta.slots : undefined);
+
+  const slots = Number(slotsRaw);
   const hasSlots =
     Number.isFinite(slots) &&
     Number.isInteger(slots) &&
@@ -865,6 +1098,7 @@ function deleteScheduleRecord(id) {
 function deleteScheduleById(id) {
   try {
     const list = deleteScheduleRecord(id);
+    window.SAD_deletePreviewBlob?.(id);
     return {
       ok: true,
       count: Array.isArray(list) ? list.length : 0,
@@ -879,6 +1113,8 @@ function deleteScheduleById(id) {
 function clearAllSchedules() {
   try {
     localStorage.removeItem(LS_KEY_SCHEDULES);
+    window.SAD_clearPreviewBlobs?.();
+
     return { ok: true, count: 0, list: [] };
   } catch (e) {
     console.warn("B+ clearAllSchedules failed", e);
@@ -886,18 +1122,39 @@ function clearAllSchedules() {
   }
 }
 
-/*** Optional: stats for your UI/debug (memory sanity) ***/
 function getScheduleStorageStats() {
   const list = loadSchedulesList();
+
+  // localStorage thumb footprint (string chars)
   let thumbChars = 0;
   for (const r of list) {
     if (r?.thumb?.dataURL) thumbChars += r.thumb.dataURL.length;
   }
+
+  // IndexedDB preview blob stats (optional)
+  let blobCount = null;
+  let blobBytes = null;
+  try {
+    const s = window.SAD_getPreviewBlobStats?.();
+    // allow either sync or promise return
+    if (s && typeof s.then === "function") {
+      // keep non-async API: best-effort fire-and-forget update in console
+      s.then(v => console.log("SAD blob stats:", v)).catch(() => {});
+    } else if (s && typeof s === "object") {
+      blobCount = Number.isFinite(s.count) ? s.count : null;
+      blobBytes = Number.isFinite(s.bytes) ? s.bytes : null;
+    }
+  } catch {}
+
   return {
     count: list.length,
     queryable: list.filter(r => r.flags?.queryable).length,
     withThumb: list.filter(r => r.flags?.hasThumb).length,
-    thumbChars
+    thumbChars,
+
+    // new (optional)
+    blobCount,
+    blobBytes
   };
 }
 
@@ -2655,6 +2912,85 @@ function setUploadStatus(mode, msg, sub = "") {
 }
 
 /*************************
+ * WORK COLOR MODEL (Purple) — tolerance + percentage
+ *************************/
+const PURPLE_TOL_BASE = 44;       // start a bit forgiving (purple varies)
+const PURPLE_TOL_MAX  = 90;
+const PURPLE_MIN_FRAC_DEFAULT = 0.18; // percent of samples in a cell that must be purple
+
+function isValidWorkColor(c) {
+  if (!c || typeof c !== "object") return false;
+  const r = Number(c.r), g = Number(c.g), b = Number(c.b);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return false;
+  if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) return false;
+
+  if (c.tol !== undefined) {
+    const tol = Number(c.tol);
+    if (!Number.isFinite(tol) || tol < 0 || tol > PURPLE_TOL_MAX) return false;
+  }
+  if (c.minFrac !== undefined) {
+    const mf = Number(c.minFrac);
+    if (!Number.isFinite(mf) || mf < 0 || mf > 1) return false;
+  }
+  return true;
+}
+
+function isWorkMatch(r, g, b, work) {
+  if (!work) return false;
+  const tol = Number.isFinite(work.tol) ? work.tol : PURPLE_TOL_BASE;
+  return (
+    Math.abs(r - work.r) <= tol &&
+    Math.abs(g - work.g) <= tol &&
+    Math.abs(b - work.b) <= tol
+  );
+}
+
+// Sample purple fraction inside a (day,slot) rect (same sampling style as classifySlotSample)
+function sampleWorkFrac(pre, slotBand, dayRegion, work, opts = {}) {
+  const {
+    samples = 140,
+    insetX = 8,
+    insetY = 2,
+  } = opts;
+
+  if (!pre?.imgData || !Number.isFinite(pre.w) || !Number.isFinite(pre.h)) {
+    return { ok: false, reason: "bad pre" };
+  }
+  if (!slotBand || !dayRegion || !work) {
+    return { ok: false, reason: "missing slot/day/work" };
+  }
+
+  const { w, h, imgData } = pre;
+
+  let x0 = Math.floor(dayRegion.x0 ?? NaN);
+  let x1 = Math.floor(dayRegion.x1 ?? NaN);
+  let y0 = Math.floor(slotBand.yStart ?? NaN);
+  let y1 = Math.floor(slotBand.yEnd ?? NaN);
+
+  if (!Number.isFinite(x0) || !Number.isFinite(x1) || x1 <= x0) return { ok: false, reason: "bad dayRegion" };
+  if (!Number.isFinite(y0) || !Number.isFinite(y1) || y1 <= y0) return { ok: false, reason: "bad slotBand" };
+
+  x0 = clamp(x0 + insetX, 0, w - 1);
+  x1 = clamp(x1 - insetX, x0 + 1, w);
+  y0 = clamp(y0 + insetY, 0, h - 1);
+  y1 = clamp(y1 - insetY, y0 + 1, h);
+
+  let workCount = 0;
+
+  for (let i = 0; i < samples; i++) {
+    const x = (x0 + Math.random() * (x1 - x0)) | 0;
+    const y = (y0 + Math.random() * (y1 - y0)) | 0;
+    const p = idxOf(x, y, w);
+
+    const r = imgData[p], g = imgData[p + 1], b = imgData[p + 2];
+    if (isWorkMatch(r, g, b, work)) workCount++;
+  }
+
+  const workFrac = workCount / samples;
+  return { ok: true, workFrac: Math.round(workFrac * 1000) / 1000, samples };
+}
+
+/*************************
  * LAYER H/I GLUE — computeFrozenNavFromPre(pre)
  *
  * Purpose:
@@ -2890,7 +3226,52 @@ window.buildAndPublishNav = buildAndPublishNav;
     );
   }
 
-  // Sample-based classifier (matches your old “bgFrac primary, inkFrac secondary”)
+  // --- Purple "work" detection (center + tol + fraction threshold) ---
+  const PURPLE_WORK = { r: 213, g: 43, b: 255, tol: 55 };  // tol is adjustable
+
+  function isPurpleMatch(r, g, b, p = PURPLE_WORK) {
+    const tol = Number.isFinite(p?.tol) ? p.tol : 55;
+    return (
+      Math.abs(r - p.r) <= tol &&
+      Math.abs(g - p.g) <= tol &&
+      Math.abs(b - p.b) <= tol
+    );
+  }
+
+  function measurePurpleFrac(pre, slotBand, dayRegion, opts = {}) {
+    const {
+      samples = 160,
+      insetX = 8,
+      insetY = 2,
+      purple = PURPLE_WORK
+    } = opts;
+
+    const { w, h, imgData } = pre;
+
+    let x0 = Math.floor(dayRegion.x0), x1 = Math.floor(dayRegion.x1);
+    let y0 = Math.floor(slotBand.yStart), y1 = Math.floor(slotBand.yEnd);
+
+    x0 = _clamp(x0 + insetX, 0, w - 1);
+    x1 = _clamp(x1 - insetX, x0 + 1, w);
+    y0 = _clamp(y0 + insetY, 0, h - 1);
+    y1 = _clamp(y1 - insetY, y0 + 1, h);
+
+    let purpleCount = 0;
+
+    for (let i = 0; i < samples; i++) {
+      const x = (x0 + Math.random() * (x1 - x0)) | 0;
+      const y = (y0 + Math.random() * (y1 - y0)) | 0;
+      const p = _idxOf(x, y, w);
+
+      const r = imgData[p], g = imgData[p + 1], b = imgData[p + 2];
+      if (isPurpleMatch(r, g, b, purple)) purpleCount++;
+    }
+
+    return purpleCount / samples;
+  }
+
+  // Sample-based classifier (bgFrac primary) + "occupiedFrac" hybrid rule
+  // occupiedFrac counts NON-white pixels that are ALSO NOT purple (i.e., actual busy ink)
   function classifySlotSample(pre, slotBand, dayRegion, bg, opts = {}) {
     const {
       samples = 140,
@@ -2898,6 +3279,10 @@ window.buildAndPublishNav = buildAndPublishNav;
       inkFracMax = 0.12,
       insetX = 8,
       insetY = 2,
+
+      // ✅ Hybrid: only call it busy if >= 50% of the cell is occupied by non-bg, non-purple ink
+      busyFracMin = 0.50,
+      purple = PURPLE_WORK
     } = opts;
 
     if (!pre?.imgData || !Number.isFinite(pre.w) || !Number.isFinite(pre.h)) {
@@ -2925,6 +3310,8 @@ window.buildAndPublishNav = buildAndPublishNav;
 
     let bgCount = 0;
     let nonWhiteCount = 0;
+    let purpleCount = 0;
+    let occupiedCount = 0; // non-white AND NOT purple (your "true busy ink")
 
     for (let i = 0; i < samples; i++) {
       const x = (x0 + Math.random() * (x1 - x0)) | 0;
@@ -2933,13 +3320,37 @@ window.buildAndPublishNav = buildAndPublishNav;
 
       const r = imgData[p], g = imgData[p + 1], b = imgData[p + 2];
 
-      if (isBgMatch(r, g, b, bg)) bgCount++;
-      if (!_isNearWhite(r, g, b)) nonWhiteCount++;
+      const isBg = isBgMatch(r, g, b, bg);
+      const isPurple = isPurpleMatch(r, g, b, purple);
+      const isNonWhite = !_isNearWhite(r, g, b);
+
+      if (isBg) bgCount++;
+      if (isNonWhite) nonWhiteCount++;
+      if (isPurple) purpleCount++;
+
+      // occupied = ink that isn't purple (i.e. class/typing/real busy)
+      if (isNonWhite && !isPurple && !isBg) occupiedCount++;
     }
 
     const bgFrac = bgCount / samples;
     const inkFrac = nonWhiteCount / samples;
+    const purpleFrac = purpleCount / samples;
+    const occupiedFrac = occupiedCount / samples;
 
+    // ✅ Hybrid rule: if >=50% occupied (non-purple), call it busy
+    if (occupiedFrac >= busyFracMin) {
+      return {
+        ok: true,
+        free: false,
+        bgFrac: Math.round(bgFrac * 1000) / 1000,
+        inkFrac: Math.round(inkFrac * 1000) / 1000,
+        purpleFrac: Math.round(purpleFrac * 1000) / 1000,
+        occupiedFrac: Math.round(occupiedFrac * 1000) / 1000,
+        samples
+      };
+    }
+
+    // Otherwise fall back to your bgFrac-first logic
     const free =
       (bgFrac >= bgFracMin) ||
       (bgFrac >= 0.55 && inkFrac <= inkFracMax);
@@ -2949,6 +3360,8 @@ window.buildAndPublishNav = buildAndPublishNav;
       free,
       bgFrac: Math.round(bgFrac * 1000) / 1000,
       inkFrac: Math.round(inkFrac * 1000) / 1000,
+      purpleFrac: Math.round(purpleFrac * 1000) / 1000,
+      occupiedFrac: Math.round(occupiedFrac * 1000) / 1000,
       samples
     };
   }
@@ -3019,7 +3432,7 @@ window.buildAndPublishNav = buildAndPublishNav;
     if (x1 <= x0 + 4) return region;
     return { ...region, x0, x1 };
   }
-
+  
   /**
    * ✅ THE MISSING FUNCTION
    * Returns:
@@ -3027,7 +3440,13 @@ window.buildAndPublishNav = buildAndPublishNav;
    */
   function computeAvailFromFrozenNav(pre, nav, opts = {}) {
     const spillPolicy = opts.spillPolicy || "none"; // "softFree" supported
-    const classifyOpts = opts.classify || {};
+
+    // You can override thresholds here if needed
+    const classifyOpts = {
+      ...(opts.classify || {}),
+      // default hybrid rule if not provided
+      busyFracMin: (opts.classify?.busyFracMin ?? 0.50),
+    };
 
     const dayRegions = nav?.dayRegions;
     const slotBands  = nav?.slotBands;
@@ -3046,11 +3465,13 @@ window.buildAndPublishNav = buildAndPublishNav;
 
     const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
     const daysOut = {};
+    const workDaysOut = {}; // ✅ will be filled now
 
     for (const day of WEEKDAYS) {
       const rawRegion = dayRegions[day];
       if (!rawRegion) {
         daysOut[day] = [];
+        workDaysOut[day] = []; // keep shape consistent
         continue;
       }
 
@@ -3058,8 +3479,27 @@ window.buildAndPublishNav = buildAndPublishNav;
       const region = safeTrimDayRegion(rawRegion, dividerXs, 6);
 
       const arr = new Array(slotBands.length);
+      const workArr = new Array(slotBands.length);
+
       for (let i = 0; i < slotBands.length; i++) {
         const slot = slotBands[i];
+
+        // --- purple work detection ---
+        const purpleFrac = measurePurpleFrac(pre, slot, region, {
+          samples: 160,
+          insetX: 8,
+          insetY: 2
+        });
+
+        // threshold: if >= 0.18, treat as PLACEMENT
+        const isWork = purpleFrac >= 0.18;
+        workArr[i] = isWork;
+
+        // ✅ Spec: PLACEMENT counts as available (but labeled separately in workDays)
+        if (isWork) {
+          arr[i] = true;   // available
+          continue;
+        }
 
         const base = classifySlotSample(pre, slot, region, bg, classifyOpts);
 
@@ -3081,17 +3521,26 @@ window.buildAndPublishNav = buildAndPublishNav;
       }
 
       daysOut[day] = arr;
+
+      // ✅ THIS WAS YOUR MISSING LINE:
+      workDaysOut[day] = workArr;
     }
+
+    const slotCount = Array.isArray(slotBands) ? slotBands.length : 0;
 
     return {
       ok: true,
       avail: {
         version: 1,
         anchorStartTime: nav.anchorStartTime || "8:00 AM",
+        slots: slotCount,
         days: daysOut,
+        workDays: workDaysOut, // ✅ now populated
         meta: {
           spillPolicy,
-          slots: Array.isArray(slotBands) ? slotBands.length : 0
+          slots: slotCount,
+          // helpful to remember the hybrid rule used
+          busyFracMin: classifyOpts.busyFracMin
         }
       }
     };
@@ -3104,123 +3553,6 @@ window.buildAndPublishNav = buildAndPublishNav;
     hasFn: typeof window.computeAvailFromFrozenNav === "function"
   });
 })();
-// ----------------------------------------
-// Layer J-ish: compute availability from frozen nav
-// Contract: return {ok, avail} and NEVER throw
-// ----------------------------------------
-function computeAvailFromFrozenNav(pre, nav, opts = {}) {
-  try {
-    if (!pre || !pre.imgData || !Number.isFinite(pre.w) || !Number.isFinite(pre.h)) {
-      return { ok: false, reason: "bad pre (missing imgData/w/h)" };
-    }
-    if (!nav || !nav.dayRegions || !Array.isArray(nav.slotBands) || nav.slotBands.length < 1) {
-      return { ok: false, reason: "bad nav (missing dayRegions/slotBands)" };
-    }
-
-    const bg = nav.bgWhite || nav.bg;
-    if (!bg || !Number.isFinite(bg.r) || !Number.isFinite(bg.g) || !Number.isFinite(bg.b) || !Number.isFinite(bg.tol)) {
-      return { ok: false, reason: "nav missing bgWhite/bg" };
-    }
-
-    const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-
-    // Tunables (keep defaults conservative)
-    const classify = opts.classify || {};
-    const samples = Number.isFinite(classify.samples) ? classify.samples : 120;
-    const bgFracMin = Number.isFinite(classify.bgFracMin) ? classify.bgFracMin : 0.82;
-    const inkFracMax = Number.isFinite(classify.inkFracMax) ? classify.inkFracMax : 0.12;
-
-    // Inset to avoid divider strokes
-    const insetX = Number.isFinite(classify.insetX) ? classify.insetX : 6;
-    const insetY = Number.isFinite(classify.insetY) ? classify.insetY : 2;
-
-    function isBgMatch(r, g, b) {
-      return (
-        Math.abs(r - bg.r) <= bg.tol &&
-        Math.abs(g - bg.g) <= bg.tol &&
-        Math.abs(b - bg.b) <= bg.tol
-      );
-    }
-
-    function classifySlot(pre, slotBand, dayRegion) {
-      const { w, h, imgData } = pre;
-      let x0 = Math.floor(dayRegion.x0 + insetX);
-      let x1 = Math.floor(dayRegion.x1 - insetX);
-      let y0 = Math.floor(slotBand.yStart + insetY);
-      let y1 = Math.floor(slotBand.yEnd - insetY);
-
-      // clamp
-      x0 = clamp(x0, 0, w - 1);
-      x1 = clamp(x1, x0 + 1, w);
-      y0 = clamp(y0, 0, h - 1);
-      y1 = clamp(y1, y0 + 1, h);
-
-      let bgCount = 0;
-      let nonWhiteCount = 0;
-
-      for (let i = 0; i < samples; i++) {
-        const x = (x0 + Math.random() * (x1 - x0)) | 0;
-        const y = (y0 + Math.random() * (y1 - y0)) | 0;
-        const p = idxOf(x, y, w);
-
-        const r = imgData[p], g = imgData[p + 1], b = imgData[p + 2];
-
-        if (isBgMatch(r, g, b)) bgCount++;
-        if (!isNearWhite(r, g, b)) nonWhiteCount++;
-      }
-
-      const bgFrac = bgCount / samples;
-      const inkFrac = nonWhiteCount / samples;
-
-      // Primary: bg match. Secondary: low ink.
-      const free = (bgFrac >= bgFracMin) || (bgFrac >= 0.55 && inkFrac <= inkFracMax);
-
-      return {
-        ok: true,
-        free,
-        bgFrac: Math.round(bgFrac * 1000) / 1000,
-        inkFrac: Math.round(inkFrac * 1000) / 1000
-      };
-    }
-
-    // Build availability grid: day -> array of booleans per slot
-    const byDay = {};
-    for (const day of WEEKDAYS) {
-      const region = nav.dayRegions[day];
-      if (!region) continue;
-
-      const slots = [];
-      for (let i = 0; i < nav.slotBands.length; i++) {
-        const s = nav.slotBands[i];
-        const r = classifySlot(pre, s, region);
-        slots.push({
-          i,
-          free: !!r.free,
-          bgFrac: r.bgFrac,
-          inkFrac: r.inkFrac
-        });
-      }
-      byDay[day] = { slots };
-    }
-
-    const avail = {
-      schema: "avail.v1",
-      timeStepMin: 30,
-      byDay,
-      meta: {
-        ts: Date.now(),
-        spillPolicy: opts.spillPolicy || "softFree"
-      }
-    };
-
-    return { ok: true, avail };
-  } catch (e) {
-    console.warn("computeAvailFromFrozenNav EXCEPTION", e);
-    return { ok: false, reason: e?.message || String(e) };
-  }
-}
-
-window.computeAvailFromFrozenNav = computeAvailFromFrozenNav;
 
 /*************************
  * ✅ LAYER M — UI (B+-aligned, SINGLE-BIND, READY-GATED)
@@ -3321,12 +3653,46 @@ function M_openModalWithThumb(dataUrl, title = "") {
 
 function M_closeModal() {
   if (!M.previewModal) return;
+
+  if (__M_PREVIEW_REVOKE__) { try { __M_PREVIEW_REVOKE__(); } catch {} }
+  __M_PREVIEW_REVOKE__ = null;
+
   M.previewModal.style.display = "none";
   if (M.previewImg) M.previewImg.src = "";
   if (M.previewTitle) M.previewTitle.textContent = "";
   M_lockBodyScroll(false);
 }
 
+let __M_PREVIEW_REVOKE__ = null;
+
+async function M_openModalForScheduleId(id, fallbackThumbDataUrl = "", title = "") {
+  if (!M.previewModal || !M.previewImg) return;
+
+  // reset any prior objectURL
+  if (__M_PREVIEW_REVOKE__) { try { __M_PREVIEW_REVOKE__(); } catch {} }
+  __M_PREVIEW_REVOKE__ = null;
+
+  // Prefer full-res blob from IndexedDB
+  try {
+    if (typeof window.SAD_getPreviewObjectURL === "function") {
+      const r = await window.SAD_getPreviewObjectURL(id);
+      if (r?.ok && r.url) {
+        M.previewImg.src = r.url;
+        __M_PREVIEW_REVOKE__ = r.revoke || null;
+      } else {
+        M.previewImg.src = fallbackThumbDataUrl || "";
+      }
+    } else {
+      M.previewImg.src = fallbackThumbDataUrl || "";
+    }
+  } catch {
+    M.previewImg.src = fallbackThumbDataUrl || "";
+  }
+
+  if (M.previewTitle) M.previewTitle.textContent = title || "";
+  M.previewModal.style.display = "flex";
+  M_lockBodyScroll(true);
+}
 
 /* -------------------------------------------
  * M2 — READY gate (single source of truth)
@@ -3445,8 +3811,8 @@ function M_renderSchedulesList() {
         </div>
 
         <div class="schedule-row-actions">
-          <button class="btn-small btn-preview" ${hasThumb ? "" : "disabled"}
-            title="${hasThumb ? "Preview" : "No thumbnail saved"}"
+          <button class="btn-small btn-preview"
+            title="Preview"
             data-action="preview"
             data-id="${id}">
             Preview
@@ -3463,6 +3829,37 @@ function M_renderSchedulesList() {
   }).join("");
 }
 
+function M_onSchedulesListClick(e) {
+  const btn = e.target?.closest?.("button[data-action]");
+  if (!btn) return;
+
+  const action = btn.getAttribute("data-action");
+  const id = btn.getAttribute("data-id") || "";
+  if (!id) return;
+
+  const row = btn.closest(".schedule-row");
+  const name = row?.querySelector?.(".schedule-row-name")?.textContent || "";
+
+  if (action === "preview") {
+    // fallback thumb (if present)
+    const rec = (M_safeLoadSchedulesList?.() || []).find(r => r?.id === id);
+    const thumb =
+      rec?.thumb?.dataURL ||
+      (typeof rec?.thumb === "string" ? rec.thumb : "") ||
+      rec?.thumbDataUrl ||
+      "";
+    M_openModalForScheduleId(id, thumb, name);
+    return;
+  }
+
+  if (action === "delete") {
+    // your existing delete flow (whatever you already have)
+    if (typeof window.deleteScheduleById === "function") {
+      window.deleteScheduleById(id);
+      M_renderSchedulesList();
+    }
+  }
+}
 
 /* -------------------------------------------
  * M5 — Add Schedule click (READY-gated)
@@ -3493,46 +3890,30 @@ function M_resetAfterAddScheduleUIOnce() {
   }
 }
 
-function M_onAddScheduleClick() {
-  const person = M_getPersonName();
-  if (!person) {
-    M_toast("Enter a person name first.");
-    return;
-  }
-
-  const g = M_getSessionGate();
-  if (!g.ok) {
-    console.warn("ADD SCHEDULE blocked:", g.missing);
-    M_toast(`Add Schedule blocked: missing ${g.missing.join(", ")}.`);
-    M_updateAddButtonGate();
-    return;
-  }
-
+async function M_onAddScheduleClick() {
   try {
-    M_setDisabled(M.addScheduleButton, true, "Saving...");
+    // ✅ pipeline is now async (IndexedDB), so we must await
+    const r = await window.addScheduleFromCurrentSession();
 
-    // 1) SAVE
-    const res = M_callAddSchedulePipeline();
-    if (!res?.ok) throw new Error(res?.reason || "Storage failed");
-
-    // 2) UI refresh from storage (authoritative)
+    if (!r?.ok) {
+      throw new Error(r?.reason || "save failed");
+    }
     M_renderSchedulesList();
 
-    // 3) Reset UI exactly once (owned by Layer M)
-    const nameForToast = person;
-    const count = res?.count ?? res?.stats?.count ?? null;
-    M_resetAfterAddScheduleUIOnce();
+    // exactly once
+    if (typeof window.resetAfterAddScheduleUI === "function") {
+      window.resetAfterAddScheduleUI();
+    }
 
-    // 4) Feedback
-    M_toast(`Saved${nameForToast ? `: ${nameForToast}` : ""}${Number.isFinite(count) ? ` (${count})` : ""}`);
-  } catch (err) {
-    console.error("Add Schedule failed:", err);
-    M_toast(`Add Schedule failed: ${err?.message || err}`);
-  } finally {
-    M_setDisabled(M.addScheduleButton, false, "");
-    M_updateAddButtonGate();
+    // keep your existing success status/UI if you have it
+    console.log("UI: Add Schedule ok", { id: r.id, count: r.count });
+  } catch (e) {
+    console.error("UI: Add Schedule failed:", e);
+    // keep your existing error bubble path if you have one
   }
 }
+
+window.M_onAddScheduleClick = M_onAddScheduleClick;
 
 /* -------------------------------------------
  * M6 — Single-bind strategy (NO DUPES)
@@ -3582,7 +3963,7 @@ function M_rebindListDelegationOnce(listEl) {
       const src = live || thumb;
       if (!src) return;
 
-      M_openModalWithThumb(src, title);
+      M_openModalForScheduleId(id, thumb, title);
       return;
     }
 
@@ -3700,102 +4081,3 @@ function initLayerM_UI() {
     start();
   }
 })();
-
-/************************************************************
- * 🔒 ARCHITECTURE LOCK — READ BEFORE MODIFYING
- *
- * This file follows a NAVIGATION-FIRST, FREEZE-ON-UPLOAD model.
- * Once a schedule is added, ALL expensive computation is DONE.
- *
- * ===========================================================
- * CORE DESIGN (DO NOT VIOLATE)
- * ===========================================================
- *
- * 1️⃣ Upload-time (Add Schedule):
- * -----------------------------------------------------------
- * - Image is loaded at full resolution
- * - All NAVIGATION is computed ONCE:
- *   • Left-lane tick detection
- *   • Tick validation (walk-down, no phantom rows)
- *   • Global ladder + terminal tick handling
- *   • Slot band geometry (yStart/yEnd per 30-min block)
- *   • DayRegions (Mon–Fri xStart/xEnd), frozen
- *   • Friday background calibration (bgWhite), frozen
- *
- * - A LIGHTWEIGHT SNAPSHOT is saved:
- *   • No raw image data
- *   • No prefix sums
- *   • No pixel buffers
- *
- *   snapshotNavState() stores ONLY:
- *     {
- *       anchorStartTime,
- *       ticksForMap,
- *       slotBands,
- *       dayRegions,
- *       bgWhite,
- *       timeIndex,   // O(1) lookup: day → time → rect
- *       meta
- *     }
- *
- * - This snapshot is persisted to localStorage (SAD_SCHEDULES_V1)
- *
- * ===========================================================
- * 2️⃣ Query-time:
- * -----------------------------------------------------------
- * - ZERO geometry recomputation
- * - ZERO tick detection
- * - ZERO divider detection
- *
- * - Query path:
- *     UI → querySavedScheduleDayRange()
- *         → timeIndex lookup (O(1))
- *         → sample-based BG / ink checks
- *
- * - Semantics rules:
- *   • Start inclusive, End exclusive
- *   • Any overlap ⇒ BUSY
- *   • Slot is FREE only if ALL probes pass
- *
- * - Prefix sums are NOT used for semantics
- *   (kept ONLY for diagnostics / nav debugging)
- *
- * ===========================================================
- * 3️⃣ Persistence & Restore:
- * -----------------------------------------------------------
- * - localStorage holds the authoritative NAV snapshot
- * - “After refresh you MUST re-upload the same image before querying, because pixel backing = LAST_PRE.”
- *
- * ===========================================================
- * 4️⃣ UI CONTRACT (DO NOT REMOVE):
- * -----------------------------------------------------------
- * - Uploaded schedules list
- * - Each row MUST have:
- *     • Preview button (shows image if loaded)
- *     • Delete button (removes from localStorage)
- *
- * ===========================================================
- * 5️⃣ DEBUG POLICY:
- * -----------------------------------------------------------
- * - logLayerJPrecheck / Layer J debug helpers stay exposed
- * - Debug code must NEVER affect semantics logic
- *
- * ===========================================================
- * 🚫 ABSOLUTE FORBIDDEN CHANGES
- * ===========================================================
- * ❌ Re-running tick detection at query time
- * ❌ Recomputing dayRegions after upload
- * ❌ Using prefix sums to decide FREE/BUSY
- * ❌ Saving full image or prefix arrays to storage
- * ❌ Making semantics depend on raw tick pixels
- *
- * ===========================================================
- * ✅ PERFORMANCE GUARANTEE
- * ===========================================================
- * - Upload: O(image size)
- * - Query: O(slots queried) with O(1) slot lookup
- * - Scales to 50+ schedules safely (storage permitting)
- *
- * If something feels like it “needs recomputation”,
- * that is a BUG — not a missing feature.
- ************************************************************/

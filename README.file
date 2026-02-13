@@ -1,328 +1,109 @@
-# Schedule Availability Detector  
-*(Practical limit: ~55 schedule images depending on resolution)*
-
----
-
-## Overview
-
-The **Schedule Availability Detector** is a web-based tool that determines availability from **schedule images (JPG/PNG)** using **pixel-level visual analysis**, not text recognition or calendar data.
-
-Instead of interpreting labels or event names, the system analyzes the **geometric structure** of schedules drawn on an HTML canvas. This makes the tool reliable for screenshots, photos, and planner-style schedules that frequently change and lack consistent formatting.
-
----
-
-## Core Idea
-
-The tool treats schedules as **grids**, not documents.
-
-- **White or near-white space** → free time  
-- **Colored regions** → busy time  
-- **Dark horizontal lines** → time boundaries  
-- **Dark vertical lines** → weekday boundaries  
-
-No OCR. No calendars. No assumptions about providers.
-
----
-
-## Intended Use Case
-
-1. A manager collects schedule screenshots from multiple people.
-2. Each image is uploaded into the application.
-3. For each image, the user selects a **start time anchor**.
-4. Once schedules are added, the manager queries:
-   - a weekday (Monday–Friday)
-   - a start time
-   - an end time
-5. The system reports who is free at each requested time.
-
----
-
-## Anchored Time Model (Why the Start Time Dropdown Exists)
-
-The HTML canvas API cannot determine what time corresponds to a pixel position.
-
-To solve this, the user provides a **time anchor**:
-
-- The selected start time corresponds to the **first detected horizontal time line**
-- All subsequent time slots are calculated relative to this anchor
-- Each row represents a fixed interval (30 minutes)
-
-This design:
-- avoids OCR errors
-- removes font/layout dependency
-- makes time mapping deterministic and explainable
-
----
-
-## How Availability Detection Works
-
-### 1. Image Preprocessing (Once per Image)
-
-When a schedule image is added:
-
-- The image is drawn onto an offscreen canvas
-- Pixel masks are generated:
-  - near-white pixels
-  - dark pixels
-- Prefix sums are built for fast rectangular queries
-- Horizontal grid lines are detected using consistency and spacing
-
-### 2. Weekday Column Detection
-
-- Vertical dividers are detected across multiple horizontal bands
-- Divider positions are clustered and validated by consensus
-- The five largest weekday columns (Monday–Friday) are selected
-- Margins are applied to avoid borders and divider shadows
-
-Weekends are intentionally excluded.
-
----
-
-### 3. Slot Classification
-
-For each time slot and weekday cell:
-
-- The cell is subdivided into a **3×3 grid**
-- Each sub-rectangle is analyzed
-- If **any** sub-rectangle contains enough non-white pixels, the slot is marked **busy**
-- Otherwise, it is marked **free**
-
-This approach is robust against:
-- text overlap
-- light color spill
-- thin borders
-
----
-
-### 4. Bitset Indexing
-
-Availability is stored efficiently using bitsets:
-
-- Each weekday has a bitset of detected slots
-- Queries are O(1) per slot
-- No full availability table is precomputed
-
----
-
-## Query-Time Behavior
-
-Availability is computed **only when queried**:
-
-- Requested times are mapped to slot indices using the anchor time
-- Each slot is checked via bitset lookup
-- If a requested time falls outside the detected range, it is flagged as unreliable
-
----
-
-## Persistence & Session Behavior
-
-This application **automatically persists schedules** using `localStorage`.
-
-- Uploaded schedules are saved as Data URLs
-- On page reload, schedules are restored automatically
-- The **Save & Continue** button:
-  - saves schedules
-  - transitions to query mode
-- The **Clear All** button:
-  - wipes current session
-  - removes all saved schedules
-
-Persistence is browser-local only.
-
----
-
-## Assumptions About Schedule Images
-
-For best results, schedule images should:
-
-- Use white or near-white backgrounds for free time
-- Use colored blocks for occupied time
-- Use dark lines to separate time slots and weekdays
-- Maintain consistent vertical spacing between time slots
-
-Planner-style schedules used in schools and workplaces work best.
-
----
-
-## Weekday-Only Scope
-
-This tool supports **Monday through Friday only**.
-
-This constraint:
-- matches common academic/work schedules
-- simplifies segmentation logic
-- improves reliability
-
-Weekends are intentionally ignored.
-
----
-
-## What This Tool Is Not
-
-- It does not read text from images
-- It does not interpret event names
-- It does not integrate with calendar APIs
-- It does not rely on any specific schedule provider
-
----
-
-## Why This Approach Works
-
-Visual schedules already communicate availability clearly.
-
-By anchoring time explicitly and analyzing **geometry instead of text**, the system remains:
-
-- fast
-- deterministic
-- robust
-- easy to reason about
-
----
-
-## Summary
-
-The Schedule Availability Detector determines availability by:
-
-- anchoring time using explicit user input
-- detecting grid structure visually
-- analyzing pixel color ratios
-- computing availability only when queried
-
-It is designed for real-world schedule screenshots where images are the primary format.
-
-# Schedule Availability Detector
-
-## Overview
-
-The **Schedule Availability Detector** is a client-side web application that analyzes schedule screenshots, extracts their structural layout, and enables fast, reliable availability queries without repeated image processing.
-
-The system follows a **navigation-first, freeze-on-upload** architecture: images are analyzed once at upload time, converted into lightweight structured representations, and never reprocessed during queries.
-
----
-
-## Problem Statement
-
-Schedule screenshots are common but difficult to query programmatically.  
-Naïve solutions rely on repeated pixel inspection, which leads to:
-
-- poor performance at scale
-- excessive memory usage
-- fragile persistence
-- inconsistent behavior after refresh or restore
-
-This project addresses those issues by separating **image understanding** from **availability querying**.
-
----
-
-## Core Design Principles
-
-1. **Single-pass image analysis**  
-   All expensive pixel operations occur exactly once per upload.
-
-2. **Frozen structural state**  
-   Geometry, calibration, and time mapping are computed and stored as immutable snapshots.
-
-3. **Deterministic queries**  
-   Availability queries operate only on frozen metadata, never on pixels.
-
-4. **UI-only image persistence**  
-   Images are stored only as small thumbnails for preview purposes and are never reused for computation.
-
-5. **Explicit commit semantics**  
-   User intent is captured through a clear “Add Schedule” commit action that finalizes all state.
-
----
-
-## System Architecture
-
-### Upload Phase (Compute-Time)
-- User uploads a schedule image
-- The system detects:
-  - horizontal time rows (30-minute slots)
-  - vertical day regions (Monday–Friday)
-  - grid lines and dividers
-- Friday is used for background calibration
-- Navigation geometry is validated and frozen
-
-### Commit Phase
-- Availability is computed from the frozen geometry
-- Results are serialized into a compact, query-ready format
-- A lossy, downscaled thumbnail is generated for UI preview
-- The record is written to localStorage as a single atomic unit
-
-### Query Phase (Runtime)
-- Queries use only stored availability data
-- No pixel inspection occurs
-- Performance is constant-time with respect to image size
-- Results are deterministic and refresh-safe
-
----
-
-## Key Constraints (Intentionally Enforced)
-
-- Time resolution is fixed at **30-minute intervals**
-- Start times are **inclusive**, end times **exclusive**
-- Any overlap marks a slot as busy
-- Geometry is never recomputed after commit
-- Stored images are never used for semantic decisions
-- Query-time logic cannot mutate navigation state
-
----
-
-## Persistence Model
-
-Each saved schedule record contains:
-- frozen navigation geometry
-- precomputed availability data
-- minimal metadata (name, timestamps)
-- a compressed thumbnail for UI preview
-
-This allows:
-- preview functionality after refresh
-- efficient storage of dozens of schedules
-- backward-compatible schema evolution
-
----
-
-## Performance Characteristics
-
-- **Upload:** O(pixels) — performed once per schedule  
-- **Query:** O(slots) — independent of image resolution  
-- **Storage:** Optimized for localStorage limits (~5–10 MB)
-
-In practice, the system supports **30–60+ schedules** reliably using thumbnail-based previews.
-
----
-
-## Technical Stack
-
-- Vanilla JavaScript (no frameworks)
-- HTML5 Canvas for pixel access
-- Prefix-sum–based region analysis
-- localStorage for client-side persistence
-- No server dependencies
-
----
-
-## Project Status
-
-The core architecture is complete and intentionally locked.  
-Ongoing work focuses on:
-- heuristic tuning
-- UI/UX refinements
-- diagnostic tooling
-
-No further structural redesign is planned.
-
----
-
-## Motivation
-
-This project was built as an exploration of:
-- image-based structure detection
-- robust client-side state management
-- architectural separation between computation and querying
-
-The result is a system where correctness, performance, and debuggability are prioritized over ad-hoc recomputation.
-
----
+============================================================
+IMAGE COMPATIBILITY CHECKLIST
+============================================================
+
+This detector is designed for structured weekly schedule
+templates similar to the samples used in this project.
+
+Before uploading an image, make sure it meets the following
+conditions.
+
+------------------------------------------------------------
+REQUIRED (Must-Have)
+------------------------------------------------------------
+
+1) Monday-Friday Columns Only
+   - Exactly five weekday columns.
+   - Saturday/Sunday columns may cause misalignment.
+   - Extra columns can shift divider detection.
+
+2) Left Time Lane Visible
+   - The full vertical time scale must be visible.
+   - The top visible time must match the selected "Start Time".
+   - Dark tick marks must be visible.
+
+3) 30-Minute Grid
+   - Rows must align to consistent 30-minute increments.
+   - Times like 9:55 AM are supported, but snapped to the
+     nearest 30-minute block.
+   - Off-grid schedules reduce accuracy.
+
+4) White Background for Free Time
+   - Free cells must be near white.
+   - Dark mode schedules are not supported.
+   - Heavy tinting or shading may cause misclassification.
+
+5) Clear Grid Lines
+   - Horizontal and vertical grid lines must be visible.
+   - Extremely faint grids may break tick detection.
+
+------------------------------------------------------------
+SUPPORTED WITH LIMITS
+------------------------------------------------------------
+
+1) Events That Start at Non-30-Minute Times
+   Example:
+     9:55 AM - 11:35 AM
+
+   Behavior:
+     - Snaps availability to 30-minute blocks.
+     - Marks a block busy if any overlap exists.
+     - This is intentional.
+
+2) Large Full-Day Blocks
+   - Works if purple color is consistent.
+   - Heavy gradients or color shifts may fail detection.
+
+3) Very Thin Blocks
+   - Short events may be misread if probe bands
+     hit grid lines instead of interior pixels.
+   - Multi-band probing reduces but does not eliminate this.
+
+------------------------------------------------------------
+NOT SUPPORTED (Current Version)
+------------------------------------------------------------
+
+1) Saturday / Sunday Columns
+   - Architecture is calibrated for Monday-Friday only.
+   - Extra columns can corrupt day region mapping.
+
+2) Rotated / Cropped / Skewed Images
+   - Image must be upright.
+   - Entire grid must be visible.
+   - Left time lane must be fully visible.
+
+3) Non-White Free Cells
+   - Gray, patterned, gradient, or dark backgrounds
+     may break background calibration.
+
+4) Different Color Schemes
+   - Work blocks must be purple.
+   - Significant hue variation may not be detected.
+
+5) Completely Different Templates
+   - This is not a general OCR engine.
+   - It is a structured grid parser built for a
+     specific schedule format.
+
+------------------------------------------------------------
+KNOWN LIMITS
+------------------------------------------------------------
+
+- Snaps all availability to 30-minute blocks.
+- Any overlap within a block marks it busy.
+- Works best with clean exported images (PNG preferred).
+- JPEG compression artifacts may slightly affect accuracy.
+
+------------------------------------------------------------
+SUMMARY
+------------------------------------------------------------
+
+This system is robust for:
+  - Clean Monday-Friday schedule exports
+  - Consistent 30-minute grid layouts
+  - White backgrounds
+  - Purple work blocks
+
+It is not intended to parse arbitrary schedule designs.
+
+============================================================
